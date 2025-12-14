@@ -1,64 +1,3 @@
-# from fastapi import FastAPI
-# from pydantic import BaseModel
-# from sklearn.feature_extraction.text import TfidfVectorizer
-# from sklearn.metrics.pairwise import cosine_similarity
-# import pandas as pd
-# from fastapi.middleware.cors import CORSMiddleware
-# import difflib
-
-# app = FastAPI()
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# movies_data = pd.read_csv("songs.csv")
-
-# selected_features=['Title','Artist','Top Genre']
-# for feature in selected_features:
-#     movies_data[feature]=movies_data[feature].fillna('')
-
-# combined_features=movies_data['Title']+movies_data['Artist']+movies_data['Top Genre']
-# vectorizer = TfidfVectorizer()
-# feature_vectors = vectorizer.fit_transform(combined_features)
-
-# similarity = cosine_similarity(feature_vectors)
-
-# list_of_all_titles = movies_data['Title'].to_list()
-
-# class MovieRequest(BaseModel):
-#     movie: str
-
-# @app.get("/")
-# def root():
-#    return {"message": "Movie Recommendation API"}
-
-# @app.post("/recommendation")
-# def recommend(request: MovieRequest):
-#     movie_name = request.movie
-#     find_close_match = difflib.get_close_matches(movie_name, list_of_all_titles)
-#     close_match = find_close_match[0]
-
-#     index_of_the_movie = movies_data[movies_data.title == close_match]['Index'].values[0]
-
-#     similarity_score = list(enumerate(similarity[index_of_the_movie]))
-
-#     sorted_similar_movies = sorted(similarity_score, key = lambda x:x[1], reverse = True)
-
-#     recommendations = []
-
-#     for i, movie in enumerate(sorted_similar_movies[1:30]):
-#        index= movie[0]
-#        title = movies_data[movies_data.index == index]['Title'].values[0]
-#        recommendations.append(title)
-
-#     return {
-#        "matched_movies": close_match,
-#        "recommendations": recommendations
-#     }
 from fastapi import FastAPI
 from pydantic import BaseModel
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -76,37 +15,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load the data
-songs_data = pd.read_csv("songs.csv")
+# Load the new dataset
+songs_data = pd.read_csv("spotify_millsongdata.csv")
 
-# Create the 'index' column if it doesn't exist (CRITICAL FIX from previous issue)
+# Create the 'index' column if it doesn't exist
 if 'index' not in songs_data.columns:
     songs_data['index'] = songs_data.index
 
-# Feature engineering
-selected_features = ['Title', 'Artist', 'Top Genre']
+# --- FEATURES UPDATED FOR NEW DATASET COLUMNS ('song', 'artist', 'text') ---
+selected_features = ['song', 'artist', 'text']
 for feature in selected_features:
+    # Fill missing values with empty strings
     songs_data[feature] = songs_data[feature].fillna('')
 
-# Combine features
-combined_features = songs_data['Title'] + ' ' + songs_data['Artist'] + ' ' + songs_data['Top Genre']
-vectorizer = TfidfVectorizer()
+# Combine features: Song Title + Artist Name + Lyrics Text for content analysis
+combined_features = songs_data['song'] + ' ' + songs_data['artist'] + ' ' + songs_data['text']
+vectorizer = TfidfVectorizer(stop_words='english')  # Added stop_words for better lyrics processing
 feature_vectors = vectorizer.fit_transform(combined_features)
 
 # Compute similarity
 similarity = cosine_similarity(feature_vectors)
 
-list_of_all_titles = songs_data['Title'].to_list()
+# Use the 'song' column for the list of titles
+list_of_all_titles = songs_data['song'].to_list()
+# --- END OF DATASET-SPECIFIC CHANGES ---
 
-# Pydantic model updated to SongRequest
+# Pydantic model
 class SongRequest(BaseModel):
     song: str
 
 @app.get("/")
 def root():
-    return {"message": "Song Recommendation API"}
+    return {"message": "Song Recommendation API (Updated for spotify_millsongdata)"}
 
-# Endpoint updated to /song_recommendation and variable names changed
 @app.post("/song_recommendation")
 def recommend_song(request: SongRequest):
     song_name = request.song
@@ -120,8 +61,8 @@ def recommend_song(request: SongRequest):
     close_match = find_close_match[0]
 
     # 2. Get the index of the matched song (using 'index' column)
-    # NOTE: Changed .title to .Title and .Index to .index for standardisation and consistency with the added column
-    index_of_the_song = songs_data[songs_data.Title == close_match]['index'].values[0]
+    # Match against the 'song' column
+    index_of_the_song = songs_data[songs_data.song == close_match]['index'].values[0]
 
     # 3. Get the similarity scores for that song
     similarity_score = list(enumerate(similarity[index_of_the_song]))
@@ -136,12 +77,15 @@ def recommend_song(request: SongRequest):
         if index == index_of_the_song:
             continue
             
-        # Get the title using the index
-        title = songs_data[songs_data['index'] == index]['Title'].values[0]
-        recommendations.append(title)
+        # Get the title and artist using the index
+        title = songs_data[songs_data['index'] == index]['song'].values[0]
+        artist = songs_data[songs_data['index'] == index]['artist'].values[0] # Fetch artist as well
         
-        i += 1
-        if i >= 30:
+        if i < 30:
+            # Append as "Title (by Artist)" for clearer output
+            recommendations.append(f"{title} (by {artist})")
+            i += 1
+        else:
             break
 
     return {
