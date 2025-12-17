@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import difflib
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,80 +16,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load the new dataset
 songs_data = pd.read_csv("spotify_millsongdata.csv")
 
-# Create the 'index' column if it doesn't exist
-if 'index' not in songs_data.columns:
-    songs_data['index'] = songs_data.index
+songs_data["artist"] = songs_data["artist"].fillna("")
+songs_data["text"] = songs_data["text"].fillna("")
+songs_data["song"] = songs_data["song"].fillna("")
 
-# --- FEATURES UPDATED FOR NEW DATASET COLUMNS ('song', 'artist', 'text') ---
-selected_features = ['song', 'artist', 'text']
-for feature in selected_features:
-    # Fill missing values with empty strings
-    songs_data[feature] = songs_data[feature].fillna('')
+combined_features = songs_data["artist"] + " " + songs_data["text"]
 
-# Combine features: Song Title + Artist Name + Lyrics Text for content analysis
-combined_features = songs_data['song'] + ' ' + songs_data['artist'] + ' ' + songs_data['text']
-vectorizer = TfidfVectorizer(stop_words='english')  # Added stop_words for better lyrics processing
+vectorizer = TfidfVectorizer(stop_words="english")
 feature_vectors = vectorizer.fit_transform(combined_features)
 
-# Compute similarity
-similarity = cosine_similarity(feature_vectors)
+list_of_all_songs = songs_data["song"].tolist()
 
-# Use the 'song' column for the list of titles
-list_of_all_titles = songs_data['song'].to_list()
-# --- END OF DATASET-SPECIFIC CHANGES ---
-
-# Pydantic model
 class SongRequest(BaseModel):
     song: str
 
 @app.get("/")
 def root():
-    return {"message": "Song Recommendation API (Updated for spotify_millsongdata)"}
+    return {"message": "Song Recommendation API is running"}
 
-@app.post("/song_recommendation")
-def recommend_song(request: SongRequest):
+@app.post("/recommendation")
+def recommend(request: SongRequest):
     song_name = request.song
-    
-    # 1. Find the closest match to the input song name
-    find_close_match = difflib.get_close_matches(song_name, list_of_all_titles)
-    
-    if not find_close_match:
-        return {"error": f"Could not find a close match for '{song_name}' in the dataset."}
-        
-    close_match = find_close_match[0]
 
-    # 2. Get the index of the matched song (using 'index' column)
-    # Match against the 'song' column
-    index_of_the_song = songs_data[songs_data.song == close_match]['index'].values[0]
+    close_matches = difflib.get_close_matches(
+        song_name, list_of_all_songs, n=1
+    )
 
-    # 3. Get the similarity scores for that song
-    similarity_score = list(enumerate(similarity[index_of_the_song]))
+    if not close_matches:
+        return {"error": "Song not found"}
 
-    # 4. Sort the scores
-    sorted_similar_songs = sorted(similarity_score, key = lambda x:x[1], reverse = True)
+    matched_song = close_matches[0]
+
+    song_index = songs_data[
+        songs_data.song == matched_song
+    ].index[0]
+
+    similarity_scores = cosine_similarity(
+        feature_vectors[song_index],
+        feature_vectors
+    )[0]
+
+    similarity_list = list(enumerate(similarity_scores))
+
+    sorted_songs = sorted(
+        similarity_list, key=lambda x: x[1], reverse=True
+    )
 
     recommendations = []
-    i = 0
-    # 5. Extract top 30 similar songs (skipping the first one, which is the song itself)
-    for index, score in sorted_similar_songs:
-        if index == index_of_the_song:
-            continue
-            
-        # Get the title and artist using the index
-        title = songs_data[songs_data['index'] == index]['song'].values[0]
-        artist = songs_data[songs_data['index'] == index]['artist'].values[0] # Fetch artist as well
-        
-        if i < 30:
-            # Append as "Title (by Artist)" for clearer output
-            recommendations.append(f"{title} (by {artist})")
-            i += 1
-        else:
-            break
+    for index, score in sorted_songs[1:21]:
+        recommendations.append({
+            "song": songs_data.iloc[index]["song"],
+            "artist": songs_data.iloc[index]["artist"]
+        })
 
     return {
-        "matched_song": close_match,
+        "matched_song": matched_song,
         "recommendations": recommendations
     }
